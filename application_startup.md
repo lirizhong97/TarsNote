@@ -133,17 +133,17 @@ struct ServerConfig
     static bool        OpenCoroutine;       //是否启用协程处理方式
     static size_t      CoroutineMemSize;    //协程占用内存空间的最大大小
     static uint32_t    CoroutineStackSize;  //每个协程的栈大小(默认128k)
-	static int         NetThread;           //服务网络线程数量
-	static bool        ManualListen;        //是否启用手工端口监听，用于延迟accept新连接。默认情况下，服务在初始化bind绑定IP和端口后，会马上listen监听套接字，但该开关开启后，在服务启动后，应用侧可调用接口开始listen监听套接界
-	static bool        MergeNetImp;         //是否合并网络线程和逻辑处理线程，默认不合并，客户端请求push进逻辑处理线程的消息队列，并由逻辑处理线程异步处理；合并后，直接push进网络线程的消息队列，直接有网络线程处理
-	static int         BackPacketLimit;     //回包积压检查（针对单个客户连接，避免队列过大，过载保护）
-	static int         BackPacketMin;       //回包速度检查（针对单个客户连接，避免队列过大，过载保护）
-	static std::string CA;                  //CA证书(SSL)
-	static std::string Cert;                //客户端证书(SSL)
-	static std::string Key;                 //服务端密钥(SSL)
-	static bool VerifyClient;               //是否校验客户端证书(SSL)       
-	static std::string Ciphers;             //密码(SSL)  
-	static map<string, string> Context;     //框架内部用, 传递节点名称(以域名形式部署时)
+    static int         NetThread;           //服务网络线程数量
+    static bool        ManualListen;        //是否启用手工端口监听，用于延迟accept新连接。默认情况下，服务在初始化bind绑定IP和端口后，会马上listen监听套接字，但该开关开启后，在服务启动后，应用侧可调用接口开始listen监听套接界
+    static bool        MergeNetImp;         //是否合并网络线程和逻辑处理线程，默认不合并，客户端请求push进逻辑处理线程的消息队列，并由逻辑处理线程异步处理；合并后，直接push进网络线程的消息队列，直接有网络线程处理
+    static int         BackPacketLimit;     //回包积压检查（针对单个客户连接，避免队列过大，过载保护）
+    static int         BackPacketMin;       //回包速度检查（针对单个客户连接，避免队列过大，过载保护）
+    static std::string CA;                  //CA证书(SSL)
+    static std::string Cert;                //客户端证书(SSL)
+    static std::string Key;                 //服务端密钥(SSL)
+    static bool VerifyClient;               //是否校验客户端证书(SSL)       
+    static std::string Ciphers;             //密码(SSL)  
+    static map<string, string> Context;     //框架内部用, 传递节点名称(以域名形式部署时)
 };
 ```
 
