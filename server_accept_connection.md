@@ -240,7 +240,7 @@ void TC_EpollServer::NetThread::addTcpConnection(TC_EpollServer::Connection *cPt
     //新连接Connection在加入网络线程的客户端连接列表时才分配唯一标识
     cPtr->init(uid);
 
-    //加入网络线程的客户端连接列表
+    //加入网络线程的客户端连接列表。由于客户端连接列表肯定存在主线程和网络线程的并发操作，因此其内部必然存在互斥操作来保证线程安全
     _list.add(cPtr, cPtr->getTimeout() + TNOW);
 
     //同一个BindAdapter监听器的新客户端连接会分散到不同的网络线程处理，但连接数得归到同一个监听器
