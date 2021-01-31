@@ -54,7 +54,327 @@
 
 对于内部的一些其他数据结构的初始化，下面也会一一研究。<br/>
 
+<br/>
 
+
+EpollServer主要负责网络线程的管理，服务监听器BindAdapter的管理
+
+先看下EpollServer声明的一些接口和成员变量
+
+```
+class TC_EpollServer
+{
+    //初始化EpollServer实例，创建必要的数据结构，如网络线程，但这会不启动线程
+    TC_EpollServer(unsigned int iNetThreadNum = 1)；
+
+    //空连接检测开关，主要用于防止空连接攻击。可通过配置文件设置两个参数，
+    //Tars框架内部在应用启动时，会调用这两个函数设置
+    void enAntiEmptyConnAttack(bool bEnable);
+    //设置判断空连接的超时时间
+    void setEmptyConnTimeout(int timeout);
+
+    //设置本地循环日志，Tars框架内部在应用启动时，会创建日志实例，并设置进EpollServer
+    void setLocalLogger(RollWrapperInterface *pLocalLogger)；
+
+    //路由到网络线程，根据套接字路由
+    NetThread* getNetThreadOfFd(int fd) 
+
+    //设置是否合并网络线程和异步处理业务线程
+    void setMergeHandleNetThread(bool merge)
+
+    //创将监听器BindAdapter套接字，绑定端口和监听。Tars框架内部在应用启动时，会根据配置文件配置的Adapter
+    //信息，创建对应BindAdapter监听器实例，然后主动调用该函数完成监听器的初始化工作。
+    int bind(BindAdapterPtr &lsPtr);
+
+    //启动服务，开始对外提供服务。这里会启动网络线程，异步处理业务线程，并阻塞在该线程，
+    //主要执行调时属性上报，异步手动监听和等待终止通知等。
+    void waitForShutdown();
+
+    //停止服务，包括停止网络线程，异步处理业务线程和主线程(即调用waitForShutdown的线程)
+    void terminate();
+
+    //根据Adapter监听器名称获取对应的服务监听器
+    BindAdapterPtr getBindAdapter(const string &sName);
+
+    //accept新的客户端连接后，将客户端连接保存到网络线程
+    void addConnection(Connection * cPtr, int fd, CONN_TYPE iType);
+
+    //关闭连接。RecvContext包括了当前客户端连接的信息，通过该信息，
+    //EpollServer可路由到对应的网络线程，将关闭连接操作转线程到网络线程处理
+    void close(const shared_ptr<TC_EpollServer::RecvContext> &data);
+
+    //发送数据，主要用于异步响应数据。SendContext包括了当前客户端连接的信息，通过该信息，
+    //EpollServer可路由到对应的网络线程，将数据的发送操作转线程到网络线程处理
+    void send(const shared_ptr<SendContext> &data);
+
+    //获取指定服务监听器的所有客户端连接状态信息列表
+    vector<ConnStatus> getConnStatus(int lfd);
+
+    //获取所有的服务监听器列表
+    unordered_map<int, BindAdapterPtr> getListenSocketInfo();
+    vector<BindAdapterPtr> getBindAdapters();
+
+    //获取当前所有的客户端连接数量，网络线程会维护一个本线程accept的客户端连接列表
+    size_t getConnectionCount();
+
+    //停止异步处理业务线程，业务线程保存在BindAdapter服务器监听器中
+    //因此EpollServer维护了所有的服务监听器，即_bindAdapters
+    void stopThread()；
+
+    //设置accept新客户端连接回调函数，应用侧可通过Application类提供的接口注册
+    void setOnAccept(const accept_callback_functor& f)；
+
+    //设置应用回调函数，Tars框架在应用启动时注册该回调函数，主要用于属性上报
+    void setCallbackFunctor(const application_callback_functor &hf)；
+
+    //设置服务心跳回调函数，Tars框架在应用启动时注册该回调函数，主要给tarsnode上报存活心跳
+    void setHeartBeatFunctor(const heartbeat_callback_functor& heartFunc)；
+
+private:
+    //网络线程组
+    std::vector<NetThread*> _netThreads;
+
+    //网络线程数量
+    int _netThreadNum;
+
+    //epoll操作封装类
+	TC_Epoller _epoller;
+
+    //用于发送通知，主要用于通知主线程，即调用waitForShutdown的线程
+	TC_Epoller::NotifyInfo _notify;
+
+    //用来标识应用终止，用以通知网络线程和异步处理业务线程退出
+    bool _bTerminate;
+
+    //用来标识异步处理业务线程是否已经启动，会在waitForShutdown接口中启动异步处理业务线程
+    bool _handleStarted;
+
+	//是否合并网络线程和请求异步处理业务线程，如果合并，则异步处理线程类不会run，仅仅当作一个普通逻辑处理类来调用
+	bool _mergeHandleNetThread = false;
+
+    //本地循环日志，Tars框架内部会在Application类中应用启动时实例化一个日志实例，并设置到EpollServer
+    RollWrapperInterface *_pLocalLogger;
+
+    //服务监听器，即创建socket，bind绑定端口和listen监听，其内部还会维护必要的数据结构，
+    //如客户端连接列表，异步线程组和异步处理请求的消息队列等。
+	vector<BindAdapterPtr> _bindAdapters;
+	unordered_map<int, BindAdapterPtr> _listeners;
+
+	//应用回调函数，Tars框架内部会在Application类中应用启动时注册该回调函数，用于业务属性上报
+	application_callback_functor _hf;
+
+    //心跳回调函数，Tars框架内部会在Application类中应用启动时注册该回调函数
+    heartbeat_callback_functor _heartFunc;
+
+    //accept新客户端连接后的回调函数，当accept新的客户端连接后，框架会回调该函数。
+    //应用如果需要保存新连接信息，应用侧可通过Application提供的接口设置该回调函数
+    accept_callback_functor _acceptFunc;
+};
+```
+
+Tars框架在应用启动时，会实例化一个EpollServer，这会做了那些初始化工作。
+
+```
+TC_EpollServer::TC_EpollServer(unsigned int iNetThreadNum)
+: _netThreadNum(iNetThreadNum)
+, _bTerminate(false)
+, _handleStarted(false)
+, _pLocalLogger(NULL)
+, _acceptFunc(NULL)
+{
+    if(_netThreadNum < 1)
+    {
+        _netThreadNum = 1;
+    }
+
+    //网络线程的配置数目不能15个
+    if(_netThreadNum > 15)
+    {
+        _netThreadNum = 15;
+    }
+
+    //该epoll封装类实例，主要用于在主线程(调用waitForShutdown的线程)accept新的客户端连接和定时回调应用回调
+    _epoller.create(10240);
+
+    //主要用于通知主线程消息
+    _notify.init(&_epoller);
+    _notify.add(_notify.notifyFd());
+
+    //创将网络线程，但不启动。后续研究网络线程时，我们只要知道网络线程是在EpollServer构造实例时创建的
+    for (size_t i = 0; i < _netThreadNum; ++i)
+    {
+        TC_EpollServer::NetThread* netThreads = new TC_EpollServer::NetThread(this, i);
+        _netThreads.push_back(netThreads);
+    }
+}
+```
+
+上面提到了主线程，即调用waitForShutdown的线程，Tars框架在应用启动时会在Application类内调用。<br/>
+此时的调用线程就是主线程。所以我们先看下waitForShutdown的逻辑。
+
+```
+void TC_EpollServer::waitForShutdown()
+{
+    //启动异步处理业务线程。之前提到，Tars框架在应用启动时会根据配置文件的Adapter监听器的配置，
+    //实例化相应的BindAdapter监听器实例。也有提到了，每个BindAdapter监听器对应着一组的异步
+    //处理业务线程组，在实例化监听器时就会创将多个异步处理业务线程，但不会启动线程。在此时才会启动。
+    //知道这些背景后，暂时不会理会这些细节，后续会专门研究监听器。此处，只要知道会启动业务线程就够了。
+    if(!isMergeHandleNetThread())
+        startHandle();
+
+    //之前提到，在EpollServer构造时，创将了一个epoll封装类实例，用于主线程accept新客户端连接
+    //和超时定时处理。但还没有将每个BindAdapter监听器的套接字add到epoll实例。而每个网络线程也
+    //需要有一个epoll实例，用以监听每个客户端连接的读写事件。所以，此处会做三件事情。
+    //一是每个BindAdapter监听器的套接字add到主线程epoll实例
+    //二是为每个网络线程创建epoll实例
+    //三是如果服务走的是udp协议，还会是实例化一个udp连接
+    createEpoll();
+
+    //启动网络线程，会进入线程routine run函数。这里只需要知道网络线程此时已经开始工作了。
+    //即在主线程开始accept前启动网络线程。
+    for (size_t i = 0; i < _netThreadNum; ++i)
+    {
+        _netThreads[i]->start();
+    }
+
+    //主线程的逻辑
+    int64_t iLastCheckTime = TNOWMS;
+    while (!_bTerminate)
+    {
+        //等待客户端新连接
+        int iEvNum = _epoller.wait(300);
+        if (_bTerminate)
+            break;
+
+        //定时回调应用回调，进行属性上报
+        if(TNOWMS - iLastCheckTime > 1000) 
+        {
+            try { _hf(this); } catch(...) {}
+            iLastCheckTime = TNOWMS;
+        }
+
+        for (int i = 0; i < iEvNum; ++i)
+        {
+            try
+            {
+                const epoll_event &ev = _epoller.get(i);
+                uint32_t fd = TC_Epoller::getU32(ev, false);
+                auto it = _listeners.find(fd);
+                if (it != _listeners.end())
+                {
+                    //Tars提供了延迟监听的机制
+                    if (TC_Epoller::writeEvent(ev))
+                    {
+                        TC_Socket s;
+                        s.init(fd, false);
+                        s.listen(1024);
+                    }
+
+                    //接收新客户端连接
+                    if (TC_Epoller::readEvent(ev))
+                    {
+                        bool ret;
+                        do {
+                            ret = accept(fd, it->second->_ep.isIPv6() ? AF_INET6 : AF_INET);
+                        } while (ret);
+                    }
+                }
+            }
+            catch (exception &ex)
+            {
+                error("run exception:" + string(ex.what()));
+            }
+            catch (...)
+            {
+                error("TC_EpollServer::waitForShutdown unknown error");
+            }
+        }
+    }
+
+    for (size_t i = 0; i < _netThreads.size(); ++i)
+    {
+        if (_netThreads[i]->isAlive())
+        {
+            _netThreads[i]->terminate();
+            _netThreads[i]->getThreadControl().join();
+        }
+    }
+    
+}
+```
+
+考虑篇幅太大问题，接收新连接逻辑不在这里继续展开，可参考如下文档。
+***参考：[Tars接收新连接逻辑](server_accept_connection.md)***
+
+
+启动异步处理业务线程
+
+```
+void TC_EpollServer::startHandle()
+{
+    if(!this->isMergeHandleNetThread())
+    {
+        if (!_handleStarted)
+        {
+            _handleStarted = true;
+            for (auto & bindAdapter : _bindAdapters)
+            {
+                const vector<TC_EpollServer::HandlePtr> & hds = bindAdapter->getHandles();
+                for (uint32_t i = 0; i < hds.size(); ++i) 
+                {
+                    if (!hds[i]->isAlive()) 
+                    {
+                        hds[i]->start();
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+***创建epoll实例***
+
+```
+void TC_EpollServer::createEpoll()
+{
+    uint32_t maxAllConn = 0;
+    auto it = _listeners.begin();
+    while (it != _listeners.end())
+    {
+        if (it->second->getEndpoint().isTcp())
+        {
+            //获取最大连接数
+            maxAllConn += it->second->getMaxConns();
+            _epoller.add(it->first, it->first, EPOLLIN);
+        }
+        else
+        {
+            maxAllConn++;
+        }
+
+        ++it;
+    }
+
+    if (maxAllConn >= (1 << 22))
+    {
+        maxAllConn = (1 << 22) - 1;
+    }
+
+    for (size_t i = 0; i < _netThreads.size(); ++i)
+    {
+        _netThreads[i]->createEpoll(maxAllConn);
+    }
+
+    //必须先等所有网络线程调用createEpoll()，初始化list后，才能调用initUdp()
+    for (size_t i = 0; i < _netThreads.size(); ++i)
+    {
+        _netThreads[i]->initUdp(_listeners);
+    }
+}
+````
+
+探讨了主线程的逻辑，接下来要探讨网络线程，然后再探讨异步处理业务线程。毕竟线程都有一个入口函数，从入口函数来跟进逻辑处理是个不错的方法。
 
 
 
