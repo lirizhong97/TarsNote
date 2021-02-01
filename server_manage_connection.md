@@ -671,7 +671,7 @@ void TC_EpollServer::NetThread::addUdpConnection(TC_EpollServer::Connection *cPt
 
 关闭操作类型包括：
 
-1. 关闭操作包括客户端主动关闭
+1. 客户端主动关闭
 2. 业务侧服务器端主动关闭，服务异常服务器端主动关闭
 3. 连接超时服务器端主动关闭
 
@@ -822,4 +822,193 @@ void TC_EpollServer::NetThread::run()
     }
 }
 ```
+
+了解了以上背景知识，我们可以专注查看不同的关闭操作类型：
+
+1. 客户端主动关闭
+2. 业务侧服务器端主动关闭，服务异常服务器端主动关闭
+3. 连接超时服务器端主动关闭
+
+```
+void TC_EpollServer::NetThread::processNet(const epoll_event &ev)
+{
+    uint32_t uid = TC_Epoller::getU32(ev, false);
+
+    Connection *cPtr = getConnectionPtr(uid);
+
+    if(!cPtr)
+    {
+        debug("TC_EpollServer::NetThread::processNet connection[" + TC_Common::tostr(uid) + "] not exists.");
+        return;
+    }
+
+    if (TC_Epoller::errorEvent(ev))
+    {
+        delConnection(cPtr, true, EM_SERVER_CLOSE);
+        return;
+    }
+
+    if (TC_Epoller::readEvent(ev))
+    {
+        int ret = cPtr->recv();
+        if (ret < 0)
+        {
+            delConnection(cPtr, true, EM_CLIENT_CLOSE);
+
+            return;
+        }
+    }
+
+    if (TC_Epoller::writeEvent(ev))
+    {
+        int ret = cPtr->sendBuffer();
+        if (ret < 0)
+        {
+            //1是发送数据时检测到客户端一关闭连接，2是服务主动要求关闭连接或者异常导致
+            delConnection(cPtr, true, (ret == -1) ? EM_CLIENT_CLOSE : EM_SERVER_CLOSE);
+            return;
+        }
+    }
+
+    _list.refresh(uid, cPtr->getTimeout() + TNOW);
+}
+```
+
+```
+void TC_EpollServer::NetThread::processPipe()
+{
+    _notifySignal = false;
+
+    while(!_sbuffer.empty())
+    {
+        shared_ptr<SendContext> sc = _sbuffer.front();
+        Connection *cPtr = getConnectionPtr(sc->uid());
+
+        if (!cPtr)
+        {
+            _sbuffer.pop_front();
+            continue;
+        }
+        switch (sc->cmd())
+        {
+            case 'c':
+            {
+                if (cPtr->setClose())
+                {
+                    //服务器端主动要求关闭，在发送完数据后会关闭连接诶
+                    delConnection(cPtr, true, EM_SERVER_CLOSE);
+                }
+                break;
+            }
+            case 's':
+            {
+                int ret = 0;
+#if TARS_SSL
+                if (cPtr->getBindAdapter()->getEndpoint().isSSL()) {
+                    if (!cPtr->_openssl->isHandshaked()) {
+                        return;
+                    }
+                }
+                ret = cPtr->send(sc);
+#else
+                ret = cPtr->send(sc);
+#endif
+                if (ret < 0)
+                {
+                    delConnection(cPtr, true, (ret == -1) ? EM_CLIENT_CLOSE : EM_SERVER_CLOSE);
+                }
+                else
+                {
+                    _list.refresh(sc->uid(), cPtr->getTimeout() + TNOW);
+                }
+                break;
+            }
+            default:
+                assert(false);
+        }
+        _sbuffer.pop_front();
+    }
+}
+```
+
+```
+void TC_EpollServer::ConnectionList::checkTimeout(time_t iCurTime)
+{
+    //至少1s才能检查一次
+    if(iCurTime - _lastTimeoutTime < 1)
+    {
+        return;
+    }
+
+    _lastTimeoutTime = iCurTime;
+
+    TC_LockT<TC_ThreadMutex> lock(_mutex);
+
+    multimap<time_t, uint32_t>::iterator it = _tl.begin();
+
+    while(it != _tl.end())
+    {
+        //已经检查到当前时间点了, 后续不用在检查了
+        if(it->first > iCurTime)
+        {
+            break;
+        }
+
+        uint32_t uid = it->second;
+
+        ++it;
+
+        //udp的监听端口, 不做处理
+        if(_vConn[uid].first->getListenfd() == -1)
+        {
+            continue;
+        }
+
+        //超时导致服务器端主动关闭连接
+        _pEpollServer->delConnection(_vConn[uid].first, false, EM_SERVER_TIMEOUT_CLOSE);
+
+        //从链表中删除
+        _del(uid);
+    }
+
+    if(_pEpollServer->isEmptyConnCheck())
+    {
+        it = _tl.begin();
+        while(it != _tl.end())
+        {
+            uint32_t uid = it->second;
+
+            //遍历所有的空连接
+            if(_vConn[uid].first->isEmptyConn())
+            {
+                //获取空连接的超时时间点
+                time_t iEmptyTimeout = (it->first - _vConn[uid].first->getTimeout()) + (_pEpollServer->getEmptyConnTimeout()/1000);
+
+                //已经检查到当前时间点了, 后续不用在检查了
+                if(iEmptyTimeout > iCurTime)
+                {
+                    break;
+                }
+
+                //udp的监听端口, 不做处理
+                if(_vConn[uid].first->getListenfd() == -1)
+                {
+                    ++it;
+                    continue;
+                }
+
+                //空连接超时导致服务器端主动关闭
+                _pEpollServer->delConnection(_vConn[uid].first, false, EM_SERVER_TIMEOUT_CLOSE);
+
+                //从链表中删除
+                _del(uid);
+            }
+
+            ++it;
+        }
+    }
+}
+```
+
+***客户端主动关闭***
 
