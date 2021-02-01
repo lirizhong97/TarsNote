@@ -17,8 +17,12 @@
 目前考虑到的知识点列表如下：
 
 - [Tars应用启动流程](application_startup.md)
+- [Tars连接管理逻辑](server_manage_connection.md)
+- [Tars网络线程IO逻辑](server_netthread_io.md)
+- [Tars连接数据收发逻辑](server_receive_send.md)
 - [Tars服务器端逻辑](server_side_logic.md)
-- [Tars接收新连接逻辑](server_accept_connection.md)
+- [Tars网络数据缓冲TC_NetWorkBuffer](server_network_buffer.md)
+- [Tars鉴权机制](auth.md)
 - [Tars解析命令行参数](argument_parser.md)
 - [Tars解析配置文件](configure_file_parser.md)
 - [Tars的数据结构](struct_definition.md)

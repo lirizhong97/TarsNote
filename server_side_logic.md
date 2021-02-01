@@ -226,8 +226,8 @@ void TC_EpollServer::waitForShutdown()
     //和超时定时处理。但还没有将每个BindAdapter监听器的套接字add到epoll实例。而每个网络线程也
     //需要有一个epoll实例，用以监听每个客户端连接的读写事件。所以，此处会做三件事情。
     //一是每个BindAdapter监听器的套接字add到主线程epoll实例
-    //二是为每个网络线程创建epoll实例
-    //三是如果服务走的是udp协议，还会是实例化一个udp连接
+    //二是如果服务走的是udp协议，还会是实例化一个udp连接
+    //三是初始化网络线程管理的客户端连接链表
     createEpoll();
 
     //启动网络线程，会进入线程routine run函数。这里只需要知道网络线程此时已经开始工作了。
@@ -303,8 +303,7 @@ void TC_EpollServer::waitForShutdown()
 }
 ```
 
-考虑篇幅太大问题，接收新连接逻辑不在这里继续展开，可参考如下文档。
-***参考：[Tars接收新连接逻辑](server_accept_connection.md)***
+- ***[Tars连接管理逻辑](server_manage_connection.md)***<br/>
 
 
 启动异步处理业务线程
@@ -376,5 +375,89 @@ void TC_EpollServer::createEpoll()
 
 探讨了主线程的逻辑，接下来要探讨网络线程，然后再探讨异步处理业务线程。毕竟线程都有一个入口函数，从入口函数来跟进逻辑处理是个不错的方法。
 
+
+***网络线程的初始化***
+
+```
+TC_EpollServer::TC_EpollServer(unsigned int iNetThreadNum)
+: _netThreadNum(iNetThreadNum)
+{
+    if(_netThreadNum < 1)
+    {
+        _netThreadNum = 1;
+    }
+
+    //网络线程的配置数目不能15个
+    if(_netThreadNum > 15)
+    {
+        _netThreadNum = 15;
+    }
+
+    for (size_t i = 0; i < _netThreadNum; ++i)
+    {
+        //传入EpollServer和线程索引标识
+        TC_EpollServer::NetThread* netThreads = new TC_EpollServer::NetThread(this, i);
+        _netThreads.push_back(netThreads);
+    }
+}
+```
+
+网络线程是在构造EpollServer核心服务时创建的，但此时并没有启动线程。
+
+```
+class TC_EpollServer::NetThread
+{
+public:
+    TC_EpollServer::NetThread::NetThread(TC_EpollServer *epollServer, int threadIndex)
+    : _epollServer(epollServer)
+    , _threadIndex(threadIndex)
+    , _list(this)
+    {
+        _epoller.create(10240);
+        _notify.init(&_epoller);
+        _notify.add(_notify.notifyFd());
+    }
+
+private:
+    //线程索引标识，范围0～网络线程数量-1
+    int _threadIndex;
+
+    //客户端连接链表
+    ConnectionList _list;
+
+    //网络引擎核心服务
+    TC_EpollServer *_epollServer;
+};
+
+```
+
+每个网络线程都分配了一个线程索引标识，标识从0开始，最大为网络线程数量-1。还构造了一个客户端连接链表。<br/>
+此处
+
+
+
+在EpollServer构造时就初始化网络线程。这里有个问题，为什么网络线程的配置数量强制不能超过15个？<br/>
+这里一方面是基于性能考虑，另外也与客户端连接唯一标识的生成规则相关。
+
+```
+//
+void TC_EpollServer::NetThread::createEpoll(uint32_t maxAllConn)
+{
+    //_threadIndex线程索引标识，范围0~网络线程数量-1
+    list.init((uint32_t)maxAllConn, _threadIndex + 1);
+}
+
+_iConnectionMagic = ((((uint32_t)_lastTimeoutTime) << 26) & (0xFFFFFFFF << 26)) + ((iIndex << 22) & (0xFFFFFFFF << 22));
+
+uint32_t TC_EpollServer::ConnectionList::getUniqId()
+{
+    TC_LockT<TC_ThreadMutex> lock(_mutex);
+    uint32_t uid = _free.front();
+    assert(uid > 0 && uid <= _total);
+    _free.pop_front();
+    --_free_size;
+    return _iConnectionMagic | uid;
+}
+```
 
 
