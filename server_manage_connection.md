@@ -3,8 +3,8 @@
 
 1. 接收客户端连接
 2. 关闭客户端连接
-3. 读写客户端连接
-4. 空连接超时处理
+3. 空连接超时处理
+4. 读写客户端连接
 
 ***在连接管理方面，Tars做了如下几点操作：***
 
@@ -931,6 +931,8 @@ void TC_EpollServer::NetThread::processPipe()
 }
 ```
 
+***超时检测***
+
 ```
 void TC_EpollServer::ConnectionList::checkTimeout(time_t iCurTime)
 {
@@ -974,6 +976,7 @@ void TC_EpollServer::ConnectionList::checkTimeout(time_t iCurTime)
     if(_pEpollServer->isEmptyConnCheck())
     {
         it = _tl.begin();
+
         while(it != _tl.end())
         {
             uint32_t uid = it->second;
@@ -1010,5 +1013,17 @@ void TC_EpollServer::ConnectionList::checkTimeout(time_t iCurTime)
 }
 ```
 
-***客户端主动关闭***
+***归纳***
+
+1. 在网络线程读写数据检测到客户端主动关闭连接
+2. 在网络线程定时检测到客户端连接超时，服务器主动关闭
+3. 服务器主动关闭，包括业务主动关闭和异常处理
+4. 超时检测包括空连接超时检测和连接心跳超时检测，心跳检测优先与空连接检测
+
+
+由于连接读写事件比较复杂，因此不继续展开。
+
+总的来说，连接的IO操作都单线程化，对Connection的操作是线程安全的，对ConnectionList的操作提供了锁保护，因此也是线程安全的。
+
+
 

@@ -19,10 +19,8 @@
 - [Tars应用启动流程](application_startup.md)
 - [Tars连接管理逻辑](server_manage_connection.md)
 - [Tars网络线程IO逻辑](server_netthread_io.md)
-- [Tars连接数据收发逻辑](server_receive_send.md)
 - [Tars服务器端逻辑](server_side_logic.md)
 - [Tars网络数据缓冲TC_NetWorkBuffer](server_network_buffer.md)
-- [Tars鉴权机制](auth.md)
 - [Tars解析命令行参数](argument_parser.md)
 - [Tars解析配置文件](configure_file_parser.md)
 - [Tars的数据结构](struct_definition.md)
@@ -34,5 +32,6 @@
 - [Tars的客户端处理服务端响应的处理流程](client_response_flow.md)
 - [EndPoint配置](endpoint_configuration.md)
 - [Tars SSL](tars_ssl.md)
+- [Tars鉴权机制](auth.md)
 
 以上知识点可以随时进一步细化，并深入研究，可以直接修改该列表，也可在具体知识点文档中细化。
